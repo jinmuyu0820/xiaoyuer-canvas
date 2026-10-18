@@ -1,0 +1,398 @@
+﻿import { createAdapter } from '@/core/adapters/adapter-factory';
+import { resolveConnection } from '@/core/generation-providers/connection-store';
+import { connectionSnapshot } from '@/core/generation-providers/connection-contract';
+import { getEffectById } from '@/core/effects/effects';
+import { getWorkspaceEffectRegistryEntryByEffectId } from '@/core/effects/effect-registry';
+import { VIDEO_ANALYSIS_MODEL_ID } from '@/core/effects/video-analysis';
+import { getGenerationModelBindingByEffectId } from '@/core/generation-providers';
+import {
+  resolveGenerationSubmitTransition,
+  resolveProviderTaskId,
+} from '@/core/effects/generation-orchestrator';
+import { persistOutputKeepingProviderResult } from '@/core/effects/output-storage';
+import {
+  recordGeneration,
+  updateGenerationById,
+} from '@/core/effects/record-generation';
+import { startBackendPollingForGeneration } from '@/core/effects/server-poller';
+import { withGenerationSubmissionLock } from '@/core/effects/generation-submission-lock';
+import { resolveAuthorizedProjectReferenceUrls } from '@/core/effects/project-reference-authorization';
+import {
+  getGenerationPromptConstraints,
+  validateGenerationPrompt,
+} from '@/core/effects/validation';
+import {
+  getActiveProject,
+  loadProjectWithLatestSnapshot,
+} from '@/core/projects/projects';
+import {
+  completeGenerationUploadIntent,
+  consumeGenerationUploadIntent,
+  failGenerationUploadIntent,
+  getCompletedIntentUploads,
+  getGenerationUploadIntentAdmissionState,
+  issueGenerationUploadIntent,
+} from '@/core/effects/generation-upload-intent';
+import {
+  linkGenerationAsset,
+  linkGenerationInputAssetsByUrls,
+  getProjectAssetUrls,
+  recordUserAsset,
+  type AssetType,
+} from '@/core/workspace-lib/assets/user-assets';
+
+export type SubmitEffectGenerationResult = {
+  status: number;
+  body: Record<string, unknown>;
+};
+
+export type SubmitEffectGenerationInput = {
+  effectId: number;
+  input?: unknown;
+  projectId?: string | null;
+  generationIntentId?: string | null;
+  requireProject?: boolean;
+  metadata?: Record<string, unknown>;
+  authorizedReferenceUrls?: string[];
+};
+
+const asObject = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+
+const getReferencedUrls = (input: Record<string, unknown>) => {
+  const urls: string[] = [];
+  for (const key of ['image_urls', 'video_urls', 'audio_urls'] as const) {
+    if (Array.isArray(input[key])) {
+      urls.push(
+        ...input[key].filter((item): item is string => typeof item === 'string')
+      );
+    }
+  }
+  for (const key of ['image_url', 'video_url', 'audio_url'] as const) {
+    if (typeof input[key] === 'string') urls.push(input[key]);
+  }
+  return [...new Set(urls.map((url) => url.trim()).filter(Boolean))];
+};
+
+const assetTypeFromMime = (mimeType: string | null): AssetType => {
+  if (mimeType?.startsWith('video/')) return 'video';
+  if (mimeType?.startsWith('audio/')) return 'audio';
+  return 'image';
+};
+
+async function finalizeIntentUploads({
+  intentId,
+  generationId,
+}: {
+  intentId: string;
+  generationId: string;
+}) {
+  const uploads = await getCompletedIntentUploads({ intentId });
+  for (const upload of uploads) {
+    if (!upload.publicUrl || !upload.objectKey) continue;
+    const assetId = await recordUserAsset({
+      type: assetTypeFromMime(upload.mimeType),
+      source: 'upload',
+      assetClass: 'original',
+      storageProvider: upload.storageProvider ?? 'beatapi',
+      bucket: upload.bucket ?? upload.storageProvider ?? 'beatapi',
+      objectKey: upload.objectKey,
+      publicUrl: upload.publicUrl,
+      filename: upload.filename ?? undefined,
+      mimeType: upload.mimeType ?? undefined,
+      sizeBytes: upload.sizeBytes ?? undefined,
+      metadata: { generationIntentId: intentId },
+    });
+    await linkGenerationAsset({
+      generationId,
+      assetId,
+      role: 'input',
+    });
+  }
+  await completeGenerationUploadIntent({ intentId, generationId });
+}
+
+async function linkInputAssets(
+  generationId: string,
+  input: Record<string, unknown>
+) {
+  for (const key of ['image_urls', 'video_urls', 'audio_urls'] as const) {
+    const urls = Array.isArray(input[key])
+      ? input[key].filter((item): item is string => typeof item === 'string')
+      : [];
+    if (urls.length) {
+      await linkGenerationInputAssetsByUrls({ generationId, urls });
+    }
+  }
+}
+
+export async function submitEffectGeneration({
+  effectId,
+  input,
+  projectId,
+  generationIntentId,
+  requireProject = true,
+  metadata,
+  authorizedReferenceUrls = [],
+}: SubmitEffectGenerationInput): Promise<SubmitEffectGenerationResult> {
+  if (!Number.isFinite(effectId)) {
+    return { status: 400, body: { error: 'effectId is required' } };
+  }
+  const effect = await getEffectById(effectId);
+  const binding = effect
+    ? getGenerationModelBindingByEffectId({
+        effectId,
+        providerId: effect.provider,
+      })
+    : null;
+  if (
+    !effect ||
+    !binding ||
+    (!getWorkspaceEffectRegistryEntryByEffectId(effectId, effect.provider) &&
+      binding.modelId !== VIDEO_ANALYSIS_MODEL_ID)
+  ) {
+    return { status: 404, body: { error: 'Model not found' } };
+  }
+  if (effect.type !== 1 && effect.type !== 2 && effect.type !== 3) {
+    return { status: 400, body: { error: 'Unsupported task type.' } };
+  }
+
+  const normalizedProjectId = projectId?.trim() || null;
+  if (requireProject && !normalizedProjectId) {
+    return { status: 400, body: { error: 'projectId is required' } };
+  }
+  if (normalizedProjectId && !(await getActiveProject({ projectId: normalizedProjectId }))) {
+    return { status: 404, body: { error: 'Project not found' } };
+  }
+
+  const rawInput = asObject(input);
+  const { callBackUrl: _callback, callbackUrl: _callbackLower, ...safeInput } = rawInput;
+  const promptConstraints = getGenerationPromptConstraints({
+    modelId: effect.model,
+    provider: effect.provider,
+  });
+  const prompt = validateGenerationPrompt(
+    typeof safeInput.prompt === 'string' ? safeInput.prompt : '',
+    promptConstraints
+  );
+  if (!prompt.ok) {
+    return {
+      status: 400,
+      body: {
+        error:
+          prompt.code === 'PROMPT_TOO_LONG'
+            ? `Prompt must be ${prompt.maxChars} characters or fewer.`
+            : 'Prompt is required.',
+      },
+    };
+  }
+
+  const adapterInput:Record<string,unknown> = { ...safeInput, prompt: prompt.trimmedPrompt };
+  const normalizedIntentId = generationIntentId?.trim() || '';
+  if (!normalizedProjectId || !normalizedIntentId) {
+    return {
+      status: 400,
+      body: { error: 'A generation intent is required.' },
+    };
+  }
+  const capturedConnection=effect.provider==='ark'?connectionSnapshot(await resolveConnection(effect.type===2?'image':'video',typeof adapterInput.connectionId==='string'?adapterInput.connectionId:undefined)):null;
+  const recordedInput = {
+    ...adapterInput,
+    ...(capturedConnection?{_connection:capturedConnection}:{}),
+    ...(metadata ? { _source: metadata } : {}),
+    _provider: {
+      id: effect.provider,
+      modelId: binding?.modelId ?? effect.model,
+      upstreamModelId: capturedConnection?.model||effect.model,
+      effectId,
+    },
+  };
+  const admission = await withGenerationSubmissionLock<
+    | { result: SubmitEffectGenerationResult }
+    | { generationId: string; intentId: string }
+  >(async () => {
+    const referencedUrls = getReferencedUrls(adapterInput);
+    if (
+      referencedUrls.some(
+        (url) => url.startsWith('blob:') || url.startsWith('data:')
+      )
+    ) {
+      return {
+        result: {
+          status: 400,
+          body: {
+            error:
+              'A connected file is only available in this page. Re-add it and generate again.',
+          },
+        } satisfies SubmitEffectGenerationResult,
+      };
+    }
+    const [projectAssetUrls, projectState] = await Promise.all([
+      getProjectAssetUrls({
+        projectId: normalizedProjectId,
+        urls: referencedUrls,
+      }),
+      loadProjectWithLatestSnapshot({ projectId: normalizedProjectId }),
+    ]);
+    const authorizedProjectUrls = resolveAuthorizedProjectReferenceUrls({
+      referencedUrls,
+      projectAssetUrls,
+      snapshot: projectState?.snapshot,
+    });
+    authorizedProjectUrls.push(
+      ...authorizedReferenceUrls.filter((url) => referencedUrls.includes(url))
+    );
+    let admittedIntentId = normalizedIntentId;
+    let intent = await consumeGenerationUploadIntent({
+      intentId: admittedIntentId,
+      projectId: normalizedProjectId,
+      effectId,
+      referencedUrls,
+      authorizedProjectUrls,
+    });
+    let intentState = intent
+      ? null
+      : await getGenerationUploadIntentAdmissionState({
+          intentId: admittedIntentId,
+          projectId: normalizedProjectId,
+          effectId,
+        });
+    if (
+      !intent &&
+      intentState?.status === 'expired' &&
+      intentState.refreshableWithoutUploads
+    ) {
+      await failGenerationUploadIntent({ intentId: admittedIntentId });
+      admittedIntentId = await issueGenerationUploadIntent({
+        projectId: normalizedProjectId,
+        effectId,
+        expectedUploadCount: 0,
+      });
+      intent = await consumeGenerationUploadIntent({
+        intentId: admittedIntentId,
+        projectId: normalizedProjectId,
+        effectId,
+        referencedUrls,
+        authorizedProjectUrls,
+      });
+      intentState = intent
+        ? null
+        : await getGenerationUploadIntentAdmissionState({
+            intentId: admittedIntentId,
+            projectId: normalizedProjectId,
+            effectId,
+          });
+    }
+    if (!intent) {
+      // Only retire an otherwise valid pending intent that failed reference
+      // authorization. A submitting intent may belong to an in-flight paid
+      // request, while an incomplete one may still have uploads finishing.
+      if (intentState?.status === 'ready') {
+        await failGenerationUploadIntent({ intentId: admittedIntentId });
+      }
+      const failure =
+        intentState?.status === 'used'
+          ? {
+              code: 'GENERATION_ALREADY_SUBMITTED',
+              error:
+                'This generation was already submitted. Check History before trying again.',
+            }
+          : intentState?.status === 'incomplete'
+            ? {
+                code: 'GENERATION_REFERENCES_PREPARING',
+                error:
+                  'A reference file is still being prepared. Wait a moment and try Generate again.',
+              }
+            : intentState?.status === 'ready'
+              ? {
+                  code: 'GENERATION_REFERENCE_NOT_AUTHORIZED',
+                  error:
+                    'A reference is no longer available in this canvas. Re-add it and try Generate again.',
+                }
+              : {
+                  code: 'GENERATION_REQUEST_CHANGED',
+                  error:
+                    'The generation request changed before submission. Try Generate again.',
+                };
+      return {
+        result: {
+          status: 409,
+          body: failure,
+        } satisfies SubmitEffectGenerationResult,
+      };
+    }
+
+    const generationId = await recordGeneration({
+      projectId: normalizedProjectId,
+      effectId,
+      status: 'pending',
+      input: recordedInput,
+    });
+    if (!generationId) {
+      await failGenerationUploadIntent({ intentId: admittedIntentId });
+      return {
+        result: {
+          status: 500,
+          body: { error: 'Could not create generation.' },
+        } satisfies SubmitEffectGenerationResult,
+      };
+    }
+    return { generationId, intentId: admittedIntentId };
+  });
+  if ('result' in admission) return admission.result;
+  const { generationId, intentId } = admission;
+
+  try {
+    await linkInputAssets(generationId, adapterInput);
+    const result = await createAdapter(effect).createGeneration({...adapterInput,...(capturedConnection?{_connection:capturedConnection}:{})});
+    const providerError = 'error' in result ? result.error ?? null : null;
+    const transition = resolveGenerationSubmitTransition({
+      generationId,
+      providerStatus: result.status,
+      providerTaskId: resolveProviderTaskId(result.output),
+      providerOutput: result.output,
+      providerError,
+    });
+    const output =
+      result.status === 'succeeded'
+        ? await persistOutputKeepingProviderResult({
+            output: transition.output,
+            wmTaskId: generationId,
+            effectId,
+            effectType: effect.type,
+          })
+        : transition.output;
+    if (result.status === 'failed') {
+      await failGenerationUploadIntent({ intentId });
+    } else {
+      await finalizeIntentUploads({
+        intentId,
+        generationId,
+      });
+    }
+    await updateGenerationById({
+      id: generationId,
+      status: transition.publicStatus,
+      output,
+      error: transition.error,
+    });
+    if (transition.publicStatus === 'pending' || transition.publicStatus === 'processing') {
+      startBackendPollingForGeneration({ wmTaskId: generationId, effectId });
+    }
+    return {
+      status: 200,
+      body: {
+        success: transition.publicStatus === 'succeeded',
+        status: transition.publicStatus,
+        wmTaskId: generationId,
+        output,
+        error: transition.publicStatus === 'failed' ? providerError ?? 'Generation failed.' : null,
+      },
+    };
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : 'Generation failed';
+    await failGenerationUploadIntent({ intentId });
+    await updateGenerationById({ id: generationId, status: 'failed', error: message });
+    return { status: 500, body: { error: message } };
+  }
+}

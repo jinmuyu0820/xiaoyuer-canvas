@@ -1,0 +1,260 @@
+import type { EffectMetadata } from '@/core/effects/client-api';
+import type {
+  WorkspaceAspectRatio,
+  WorkspaceBackgroundSource,
+  WorkspaceCharacterOrientation,
+  WorkspaceDuration,
+  WorkspaceLanguage,
+  WorkspaceModelMode,
+  WorkspaceModelOption,
+  WorkspaceModelVariant,
+  WorkspaceOutputQuality,
+  WorkspaceQualityOption,
+} from '@/core/effects/workspace-models';
+import type {
+  CanvasCard,
+  CanvasGenerationMode,
+  CanvasCardMediaType,
+  CanvasGenerationCard,
+  CanvasTextCard,
+} from '@/core/beatcanvas/canvas-types';
+import type { ReactNode } from 'react';
+import type { SeedanceSettings } from '@/core/adapters/ark-contract';
+import type { VideoAnalysisDepth } from '@/core/effects/video-analysis';
+import { createContext, useContext } from 'react';
+
+/**
+ * Product-facing canvas state and actions. The rendering engine consumes this
+ * context without taking ownership of workflows, prompts, or persistence.
+ */
+
+type CanvasLabels = {
+  imageTitle: string;
+  videoTitle: string;
+  imageModeLabel: string;
+  videoModeLabel: string;
+  analysisModeLabel: string;
+  analysisModelLabel: string;
+  analysisStandardModelLabel: string;
+  analysisProModelLabel: string;
+  analysisPromptPlaceholder: string;
+  analyzeLabel: string;
+  analyzingLabel: string;
+  createGenerationCardLabel: string;
+  createImageGenerationCardLabel: string;
+  createVideoGenerationCardLabel: string;
+  connectorUploadLabel: string;
+  imagePromptPlaceholder: string;
+  videoPromptPlaceholder: string;
+  zoomLabel: string;
+  zoomOutLabel: string;
+  zoomInLabel: string;
+  selectToolLabel: string;
+  panToolLabel: string;
+  fitViewLabel: string;
+  hideEdgesLabel: string;
+  showEdgesLabel: string;
+  snapToGridLabel: string;
+  undoLabel: string;
+  redoLabel: string;
+  historyLabel: string;
+  latestResultLabel: string;
+  emptyStateTitle: string;
+  emptyStateDescription: string;
+  emptyGuideTitle: string;
+  emptyGuideDescription: string;
+  emptyFreeGenerateLabel: string;
+  emptyUploadStartLabel: string;
+  typeLabel: string;
+  modelLabel: string;
+  parameterLabel: string;
+  aspectRatioLabel: string;
+  outputQualityLabel: string;
+  durationLabel: string;
+  characterOrientationLabel: string;
+  backgroundSourceLabel: string;
+  languageLabel: string;
+  uploadImageLabel: string;
+  uploadVideoLabel: string;
+  fromCanvasLabel: string;
+  currentReferencesLabel: string;
+  noCanvasReferencesLabel: string;
+  removeReferenceLabel: string;
+  generateLabel: string;
+  regenerateLabel: string;
+  generatingLabel: string;
+  closeComposerLabel: string;
+  defaultSetupLabel: string;
+  modeOptionLabel: string;
+  variantOptionLabel: string;
+  qualityOptionLabel: string;
+  tokenQualityLabel: string;
+  tokenFastLabel: string;
+  tokenLiteLabel: string;
+  tokenLowLabel: string;
+  tokenMediumLabel: string;
+  tokenStandardLabel: string;
+  tokenHighLabel: string;
+  tokenProLabel: string;
+  tokenAdaptiveLabel: string;
+  tokenAutoLabel: string;
+  tokenLandscapeLabel: string;
+  tokenPortraitLabel: string;
+  tokenChineseLabel: string;
+  tokenEnglishLabel: string;
+  tokenImageOrientationLabel: string;
+  tokenVideoOrientationLabel: string;
+  tokenInputImageLabel: string;
+  tokenInputVideoLabel: string;
+  queuedStatusLabel: string;
+  generatingStatusLabel: string;
+  readyStatusLabel: string;
+  failedStatusLabel: string;
+};
+
+export type { CanvasLabels };
+
+export type BeatCanvasComposerPresentation = {
+  kind: 'default';
+};
+
+export type BeatCanvasFrontLayerValue = {
+  cards: Record<string, CanvasCard>;
+  selectedShapeIds: string[];
+  selectedCanvasCardIds: string[];
+  activeComposerCardId: string | null;
+  imageModels: WorkspaceModelOption[];
+  videoModels: WorkspaceModelOption[];
+  effectMetadataMap: Record<string, EffectMetadata>;
+  labels: CanvasLabels;
+  composerPresentation: BeatCanvasComposerPresentation | null;
+
+  promptCharacterLimit: number;
+  canUndoCanvas: boolean;
+  canRedoCanvas: boolean;
+  onUndoCanvas: () => void;
+  onRedoCanvas: () => void;
+  onCreateImageDraft: () => void;
+  onDeleteCanvasSelection?:(shapeIds:string[])=>void;
+  onDuplicateCanvasSelection?:(shapeIds:string[])=>void;
+  onCreateTextCard?:(pagePoint?:{x:number;y:number})=>void;
+  onCreateDirectorCard?:(pagePoint?:{x:number;y:number})=>void;
+  /** Group the selected cards into a new folder, or create an empty folder at a point. */
+  onCreateFolder?:(shapeIds:string[],pagePoint?:{x:number;y:number})=>void;
+  /** False on the last allowed level: no third level of subprojects. */
+  canCreateFolder?:boolean;
+  /** Open a subproject: its own canvas, its own cards. */
+  onEnterFolder?:(folderId:string)=>void;
+  /** Ask the folder icon to rename itself. */
+  onRenameFolder?:(folderId:string)=>void;
+  /** Delete a subproject without deleting what is inside it. */
+  onDeleteFolder?:(folderId:string)=>void;
+  /** Open the local upscale options for one image/video card. */
+  onUpscaleCanvasSelection?:(cardId:string)=>void;
+  onTextHistoryCheckpoint?:()=>void;
+  onTextChange?:(id:string,patch:Partial<CanvasTextCard>)=>void;
+  onOptimizeText?:(id:string)=>Promise<void>;
+  onAcceptText?:(id:string)=>void;
+  onDiscardText?:(id:string)=>void;
+  onTextCandidateToNewCard?:(id:string)=>void;
+  onRestoreTextVersion?:(id:string,versionId:string)=>void;
+  onTextToGeneration?:(id:string,type:CanvasCardMediaType)=>void;
+  optimizingTextIds?:ReadonlySet<string>;
+  onUploadImage: () => void;
+  onCreateGenerationFromConnector: (input: {
+    sourceCardId: string;
+    taskType: CanvasCardMediaType;
+    pagePoint: {
+      x: number;
+      y: number;
+    };
+  }) => void;
+  onCreateGenerationAtPoint: (input: {
+    taskType: CanvasCardMediaType;
+    pagePoint: {
+      x: number;
+      y: number;
+    };
+  }) => void;
+  onSelectedShapeIdsChange: (shapeIds: string[]) => void;
+  onSelectedCanvasCardIdsChange: (shapeIds: string[]) => void;
+  onActiveComposerCardIdChange: (cardId: string | null) => void;
+  onDraftPromptChange: (draftId: string, prompt: string) => void;
+  onDraftTaskTypeChange: (
+    draftId: string,
+    taskType: CanvasGenerationMode
+  ) => void;
+  onDraftAnalysisDepthChange: (
+    draftId: string,
+    analysisDepth: VideoAnalysisDepth
+  ) => void;
+  onDraftModelChange: (
+    draftId: string,
+    modelId: string,
+    variant?: WorkspaceModelVariant
+  ) => void;
+  onDraftAspectRatioChange: (
+    draftId: string,
+    aspectRatio: WorkspaceAspectRatio
+  ) => void;
+  onDraftOutputQualityChange: (
+    draftId: string,
+    quality: WorkspaceOutputQuality
+  ) => void;
+  onDraftQualityChange: (draftId: string, quality: WorkspaceQualityOption) => void;
+  onDraftDurationChange: (draftId: string, duration: WorkspaceDuration) => void;
+  onDraftConnectionChange?:(draftId:string,connectionId:string)=>void;
+  onDraftSeedanceSettingsChange?: (draftId: string, settings: SeedanceSettings) => void;
+  onDraftCharacterOrientationChange: (
+    draftId: string,
+    characterOrientation: WorkspaceCharacterOrientation
+  ) => void;
+  onDraftBackgroundSourceChange: (
+    draftId: string,
+    backgroundSource: WorkspaceBackgroundSource
+  ) => void;
+  onDraftLanguageChange: (draftId: string, language: WorkspaceLanguage) => void;
+  onDraftModeChange: (draftId: string, mode: WorkspaceModelMode) => void;
+  onDraftVariantChange: (
+    draftId: string,
+    variant: WorkspaceModelVariant
+  ) => void;
+  onOpenReferencePicker: (
+    draftId: string,
+    intent: CanvasGenerationCard['type']|'audio'
+  ) => void;
+  onAttachCanvasReference: (draftId: string, sourceCardId: string) => void;
+  onDetachCanvasReference: (draftId: string, sourceCardId: string) => void;
+  onReorderCanvasReferences: (
+    draftId: string,
+    activeCardId: string,
+    overCardId: string
+  ) => void;
+  onPinGenerationOutput: (draftId: string, outputId: string) => void;
+  onGenerateDraft: (draftId: string) => void;
+};
+
+export const CanvasFrontLayerContext =
+  createContext<BeatCanvasFrontLayerValue | null>(null);
+
+export function BeatCanvasFrontLayerProvider({
+  value,
+  children,
+}: {
+  value: BeatCanvasFrontLayerValue;
+  children: ReactNode;
+}) {
+  return (
+    <CanvasFrontLayerContext.Provider value={value}>
+      {children}
+    </CanvasFrontLayerContext.Provider>
+  );
+}
+
+export function useCanvasFrontLayer() {
+  const context = useContext(CanvasFrontLayerContext);
+  if (!context) {
+    throw new Error('BeatCanvasFrontLayerProvider is missing.');
+  }
+  return context;
+}

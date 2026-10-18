@@ -1,0 +1,35 @@
+小鱼儿画布整合包（Xiaoyuer Canvas）
+Copyright 2026 jinmuyu0820
+
+本仓库（源码）基于 BeatDesign 修改。
+BeatDesign: https://github.com/BeatAPI/BeatDesign
+Copyright BeatDesign / BeatAPI 的作者与贡献者，按 Apache License 2.0 授权。
+
+随附的 LICENSE 是 Apache License 2.0 全文。按该许可证第 4 条：
+- 本仓库保留上游的许可证与归属声明；
+- 修改过的部分在下方"修改说明"中列出；
+- 分发时请随附 LICENSE 与本 NOTICE。
+
+== 修改说明（相对上游 BeatDesign）==
+
+- 增加 Windows 便携运行方式：scripts/start-portable.mjs、启动画布.cmd，固定 127.0.0.1 与本地 data 目录。
+- 接入本地超分/补帧：调用 SnowLeopard Vision 的无界面 CLI（engine\slv-engine.exe --cli），相关代码在
+  source/src/core/upscale、source/src/routes/api/app/projects/$projectId/upscale.ts 等处。
+- 增加本地项目目录、素材库、导出与 3D 导演台的整合流程。
+- 界面文案支持中/英/日，并支持构建时通过 VITE_APP_NAME 注入产品名。
+- 默认使用本地演示 provider，不预置任何 API Key 或第三方账号。
+
+== 第三方组件 ==
+
+SnowLeopard Vision（雪豹视觉）V2.2
+作者：雪豹-Elysia
+本仓库不分发其程序文件。Release 整合包中如随附其引擎子集，按其作者授权免费转载、禁止收费出售；
+其完整第三方声明见 SnowLeopard Vision\THIRD_PARTY_NOTICES.md。
+
+FFmpeg、Real-ESRGAN、Real-CUGAN、RIFE、Anime4KCPP、VapourSynth、L-SMASH Works、vs-mlrt、
+Python 便携运行时、7-Zip、Diligent Engine、glslang / SPIRV-Tools / SPIRV-Cross / volk，
+以及 Unreal Engine / Epic 示例资源，分别适用其自身许可证，详见 开源声明.md。
+
+Node.js（MIT）— 见 runtime\README.txt。
+
+本 NOTICE 与任何许可证原文冲突时，以许可证原文为准。

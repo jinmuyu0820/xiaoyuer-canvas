@@ -1,0 +1,25 @@
+export const BEATDESIGN_MCP_TOOL_NAMES = [
+  'bdesign_skill_list',
+  'bdesign_skill_get',
+  'bdesign_project_list',
+  'bdesign_project_get',
+  'bdesign_project_create',
+  'bdesign_project_target',
+  'bdesign_project_open',
+  'bdesign_asset_list',
+  'bdesign_asset_get',
+  'bdesign_asset_import',
+  'bdesign_asset_extract_frame',
+  'bdesign_canvas_get',
+  'bdesign_canvas_view',
+  'bdesign_canvas_search',
+  'bdesign_canvas_apply',
+  'bdesign_canvas_continue_from_tail',
+  'bdesign_generation_models',
+  'bdesign_generation_model_get',
+  'bdesign_generation_submit',
+  'bdesign_generation_status',
+  'bdesign_generation_history',
+] as const;
+
+export type BeatDesignMcpToolName = (typeof BEATDESIGN_MCP_TOOL_NAMES)[number];

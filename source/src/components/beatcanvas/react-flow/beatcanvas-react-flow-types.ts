@@ -1,0 +1,246 @@
+import type { GenerationTake } from '@/core/beatcanvas/generation-history';
+import type { CanvasAssetMediaType } from '@/core/beatcanvas/canvas-types';
+import type {
+  Edge,
+  Node,
+  ReactFlowInstance,
+  Viewport,
+} from '@xyflow/react';
+
+export const ASSET_CARD_NODE_TYPE = 'beatdesign-asset-card' as const;
+export const GENERATION_CARD_NODE_TYPE = 'beatdesign-generation-card' as const;
+export const TEXT_CARD_NODE_TYPE='beatdesign-text-card' as const;
+export const DIRECTOR_CARD_NODE_TYPE='beatdesign-director-card' as const;
+export const UPSCALE_CARD_NODE_TYPE='beatdesign-upscale-card' as const;
+export const FOLDER_CARD_NODE_TYPE='beatdesign-folder-card' as const;
+export const WORKFLOW_GROUP_NODE_TYPE = 'beatdesign-workflow-group' as const;
+
+export type BeatCanvasNodeType =
+  | typeof ASSET_CARD_NODE_TYPE
+  | typeof GENERATION_CARD_NODE_TYPE
+  | typeof TEXT_CARD_NODE_TYPE
+  | typeof DIRECTOR_CARD_NODE_TYPE
+  | typeof UPSCALE_CARD_NODE_TYPE
+  | typeof FOLDER_CARD_NODE_TYPE
+  | typeof WORKFLOW_GROUP_NODE_TYPE;
+
+export type BeatCanvasNodeMeta = Record<string, unknown>;
+
+export type AssetCardNodeProps = {
+  w: number;
+  h: number;
+  cardMediaType: CanvasAssetMediaType;
+  title: string;
+  thumbnailUrl: string;
+  fitMode: 'cover' | 'contain';
+  chromeMode: 'default' | 'frameless';
+  durationSec?: number | null;
+  audioRole?: string;
+  timelineId?: string | null;
+  clipCount?: number | null;
+};
+
+export type GenerationCardNodeProps = {
+  w: number;
+  h: number;
+  cardMediaType: 'image' | 'video';
+  label: string;
+  status: 'idle' | 'pending' | 'processing' | 'succeeded' | 'failed';
+  isAnalysis?: boolean;
+  latestOutputUrl?: string | null;
+  latestOutputText?: string | null;
+  analysisReportCount?: number;
+  takes?: GenerationTake[];
+  customFilename?: string;
+};
+
+export type WorkflowGroupNodeProps = {
+  w: number;
+  h: number;
+};
+export type TextCardNodeProps={w:number;h:number;textNode:true};
+
+export type DirectorCardNodeProps = {
+  w: number;
+  h: number;
+  directorNode: true;
+  label: string;
+  lastExportUrl?: string | null;
+};
+
+export type UpscaleCardNodeProps = {
+  w: number;
+  h: number;
+  upscaleNode: true;
+  /** Localized media label shown on the node. */
+  title: string;
+  cardMediaType: 'image' | 'video';
+  status: 'idle' | 'pending' | 'processing' | 'succeeded' | 'failed';
+  /** Result media once the job succeeds. */
+  thumbnailUrl: string | null;
+  /** Untouched source media, shown while the job runs. */
+  sourceUrl: string | null;
+  scale: number;
+  backend: string | null;
+  task: 'upscale' | 'interpolate';
+  /** `4×`, `1920w`, `60 FPS`: the result in one short label. */
+  summary: string;
+  /** 0..1. */
+  progress: number;
+  stage: string | null;
+  speedFps: number | null;
+  etaSeconds: number | null;
+  errorMessage: string | null;
+};
+
+export type FolderCardNodeProps = {
+  w: number;
+  h: number;
+  folderNode: true;
+  label: string;
+  memberCount: number;
+  /** Subprojects directly inside this one: the icon shows how much is hidden. */
+  subfolderCount: number;
+};
+
+export type BeatCanvasNodeData = Record<string, unknown> & {
+  meta: BeatCanvasNodeMeta;
+  props:
+    | AssetCardNodeProps
+    | GenerationCardNodeProps
+    | TextCardNodeProps
+    | DirectorCardNodeProps
+    | UpscaleCardNodeProps
+    | FolderCardNodeProps
+    | WorkflowGroupNodeProps;
+};
+
+export type BeatCanvasFlowNode = Node<BeatCanvasNodeData, BeatCanvasNodeType>;
+export type BeatCanvasFlowEdge = Edge<Record<string, unknown>, 'beatdesign-reference'>;
+
+export type CanvasPoint = { x: number; y: number };
+export type CanvasBounds = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+  center: CanvasPoint;
+};
+
+export type CanvasShapeRecord = {
+  id: string;
+  type: string;
+  x: number;
+  y: number;
+  parentId?: string;
+  meta: BeatCanvasNodeMeta;
+  props: Record<string, unknown>;
+};
+
+export type CanvasShapeInput = {
+  id: string;
+  type: string;
+  x?: number;
+  y?: number;
+  /** Explicit stacking order; folders use a negative value to sit behind cards. */
+  zIndex?: number;
+  parentId?: string;
+  meta?: BeatCanvasNodeMeta;
+  props?: Record<string, unknown>;
+};
+
+export type BeatCanvasEditor = {
+  getContainer(): HTMLDivElement;
+  getNodes(): BeatCanvasFlowNode[];
+  getEdges(): BeatCanvasFlowEdge[];
+  getShape(shapeId: string): CanvasShapeRecord | null;
+  getCurrentPageShapes(): CanvasShapeRecord[];
+  getSelectedShapeIds(): string[];
+  getSortedChildIdsForParent(parentId: string): string[];
+  getShapePageBounds(shapeId: string): CanvasBounds | null;
+  getShapesAtPoint(point: CanvasPoint): CanvasShapeRecord[];
+  getViewportPageBounds(): CanvasBounds;
+  getZoomLevel(): number;
+  getCamera(): { x: number; y: number; z: number };
+  getCameraOptions(): { zoomSteps: number[] };
+  setCameraOptions(options: { zoomSteps?: number[] }): void;
+  screenToPage(point: CanvasPoint): CanvasPoint;
+  pageToViewport(point: CanvasPoint): CanvasPoint;
+  centerOnPoint(
+    point: CanvasPoint,
+    options?: { animation?: { duration: number }; zoom?: number }
+  ): void;
+  setCamera(
+    camera: { x: number; y: number; z: number },
+    options?: { animation?: { duration: number } }
+  ): void;
+  zoomIn(
+    point?: CanvasPoint,
+    options?: { animation?: { duration: number } }
+  ): void;
+  zoomOut(
+    point?: CanvasPoint,
+    options?: { animation?: { duration: number } }
+  ): void;
+  resetZoom(
+    point?: CanvasPoint,
+    options?: { animation?: { duration: number } }
+  ): void;
+  fitView(options?: { animation?: { duration: number } }): void;
+  setEdgesVisible(visible: boolean): void;
+  setSnapToGrid(enabled: boolean): void;
+  isSnapToGridEnabled(): boolean;
+  setCurrentTool(tool: string): void;
+  select(shapeId: string): void;
+  setSelectedShapes(shapeIds: string[]): void;
+  createShape(shape: CanvasShapeInput): void;
+  updateShape(shape: CanvasShapeInput): void;
+  deleteShape(shapeId: string): void;
+  deleteShapes(shapeIds: string[]): void;
+  groupShapes(shapeIds: string[], options?: { groupId?: string }): void;
+  bringToFront(shapeIds: string[]): void;
+  createConnection(sourceId: string, targetId: string): void;
+  deleteConnection(sourceId: string, targetId: string): void;
+  setReactFlowInstance(instance: ReactFlowInstance<BeatCanvasFlowNode, BeatCanvasFlowEdge>): void;
+  setViewportState(viewport: Viewport): void;
+};
+
+export const readNodeSize = (node: BeatCanvasFlowNode) => {
+  const props = node.data.props;
+  const width =
+    typeof props.w === 'number'
+      ? props.w
+      : (node.measured?.width ?? node.width ?? 1);
+  const height =
+    typeof props.h === 'number'
+      ? props.h
+      : (node.measured?.height ?? node.height ?? 1);
+
+  return {
+    w: Math.max(1, width),
+    h: Math.max(1, height),
+  };
+};
+
+export const sortParentsBeforeChildren = (nodes: BeatCanvasFlowNode[]) => {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const depthOf = (node: BeatCanvasFlowNode) => {
+    let depth = 0;
+    let current = node;
+    const visited = new Set<string>();
+    while (current.parentId && !visited.has(current.parentId)) {
+      visited.add(current.parentId);
+      const parent = byId.get(current.parentId);
+      if (!parent) break;
+      depth += 1;
+      current = parent;
+    }
+    return depth;
+  };
+
+  return [...nodes].sort((left, right) => depthOf(left) - depthOf(right));
+};

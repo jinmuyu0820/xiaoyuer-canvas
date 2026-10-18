@@ -1,0 +1,39 @@
+# 依赖与构建产物
+node_modules/
+.pnpm-store/
+.output/
+.nitro/
+.tanstack/
+dist/
+coverage/
+test-results/
+playwright-report/
+
+# 运行包：走 Releases，不进 Git
+runtime/
+SnowLeopard Vision/
+data/
+
+# 本地数据与密钥
+*.db
+*.db-shm
+*.db-wal
+.workspace-key
+.env
+.env.*
+!.env.example
+
+# 源码里的生成物（pnpm build 会重新生成）
+source/src/paraglide/
+source/project.inlang/cache/
+
+# 内部资料（不对外发布）
+GitHub发布前验证报告.md
+
+# 系统 / 编辑器
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/*
+!.vscode/extensions.json
